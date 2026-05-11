@@ -1,18 +1,35 @@
-#!/bin/sh
-PRG="$0"
-while [ -h "$PRG" ] ; do
-    ls=`ls -ld "$PRG"`
-    link=`expr "$ls" : '.*-> \(.*\)$'`
-    if expr "$link" : '/.*' > /dev/null; then
-        PRG="$link"
-    else
-        PRG=`dirname "$PRG"`"/$link"
-    fi
-done
-APP_HOME="`cd \`dirname \"$PRG\"\`; pwd`"
-CLASSPATH=$APP_HOME/gradle/wrapper/gradle-wrapper.jar
-JAVA_EXE="${JAVA_HOME}/bin/java"
-exec "$JAVA_EXE" -Xmx64m -Xms64m \
-    "-Dorg.gradle.appname=gradlew" \
-    -classpath "$CLASSPATH" \
-    org.gradle.wrapper.GradleWrapperMain "$@"
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.lotato.app'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.lotato.app"
+        minSdk 21
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    buildTypes {
+        debug {
+            minifyEnabled false
+        }
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
+
+dependencies {
+    // Rien — WebView est natif Android
+}
