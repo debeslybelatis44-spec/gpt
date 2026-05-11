@@ -15,6 +15,7 @@ import android.content.Context;
 public class MainActivity extends Activity {
 
     private WebView webView;
+    private WebView printWebView;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -31,73 +32,77 @@ public class MainActivity extends Activity {
         settings.setBuiltInZoomControls(false);
         settings.setDatabaseEnabled(true);
         settings.setAllowFileAccess(true);
-        settings.setJavaScriptCanOpenWindowsAutomatically(true);
-        settings.setSupportMultipleWindows(true);
 
-        // Interface Java accessible depuis JavaScript
-        webView.addJavascriptInterface(new PrintInterface(this, webView), "AndroidPrint");
+        webView.addJavascriptInterface(new PrintBridge(), "AndroidPrint");
 
-        webView.setWebViewClient(new WebViewClient());
-
-        webView.setWebChromeClient(new WebChromeClient() {
+        webView.setWebViewClient(new WebViewClient() {
             @Override
-            public boolean onCreateWindow(WebView view, boolean isDialog,
-                                          boolean isUserGesture, android.os.Message resultMsg) {
-                // Ouvrir les popups dans la même WebView
-                WebView newWebView = new WebView(view.getContext());
-                WebSettings s = newWebView.getSettings();
-                s.setJavaScriptEnabled(true);
-                s.setDomStorageEnabled(true);
-
-                newWebView.setWebChromeClient(new WebChromeClient() {
-                    @Override
-                    public void onCloseWindow(WebView w) {
-                        // Fermer la popup après impression
-                    }
-                });
-
-                newWebView.setWebViewClient(new WebViewClient() {
-                    @Override
-                    public void onPageFinished(WebView view, String url) {
-                        // Déclencher l'impression Android native
-                        triggerPrint(view);
-                    }
-                });
-
-                WebView.WebViewTransport transport = (WebView.WebViewTransport) resultMsg.obj;
-                transport.setWebView(newWebView);
-                resultMsg.sendToTarget();
-                return true;
+            public void onPageFinished(WebView view, String url) {
+                // Injecter le patch qui remplace window.open par AndroidPrint
+                String patch = 
+                    "(function() {" +
+                    "  var _originalOpen = window.open;" +
+                    "  window.open = function(url, name, features) {" +
+                    "    var popup = {" +
+                    "      document: {" +
+                    "        _html: ''," +
+                    "        write: function(html) { this._html += html; }," +
+                    "        close: function() {" +
+                    "          if (window.AndroidPrint) {" +
+                    "            window.AndroidPrint.printHTML(this._html);" +
+                    "          }" +
+                    "        }" +
+                    "      }," +
+                    "      focus: function() {}," +
+                    "      close: function() {}," +
+                    "      onload: null," +
+                    "      print: function() {}" +
+                    "    };" +
+                    "    setTimeout(function() {" +
+                    "      if (popup.onload) popup.onload();" +
+                    "    }, 500);" +
+                    "    return popup;" +
+                    "  };" +
+                    "})();";
+                view.evaluateJavascript(patch, null);
             }
         });
 
+        webView.setWebChromeClient(new WebChromeClient());
         webView.loadUrl("https://lotato1.onrender.com/agent1.html");
     }
 
-    private void triggerPrint(WebView targetView) {
-        PrintManager printManager = (PrintManager) getSystemService(Context.PRINT_SERVICE);
-        PrintDocumentAdapter adapter = targetView.createPrintDocumentAdapter("Ticket LOTATO");
-        PrintAttributes attrs = new PrintAttributes.Builder()
-                .setMediaSize(new PrintAttributes.MediaSize(
-                        "THERMAL_80MM", "Thermal 80mm", 3150, 8000))
-                .setMinMargins(PrintAttributes.Margins.NO_MARGINS)
-                .build();
-        printManager.print("Ticket LOTATO", adapter, attrs);
-    }
-
-    // Interface JavaScript → Android
-    public class PrintInterface {
-        Context context;
-        WebView webView;
-
-        PrintInterface(Context c, WebView w) {
-            this.context = c;
-            this.webView = w;
-        }
-
+    public class PrintBridge {
         @JavascriptInterface
-        public void printPage() {
-            runOnUiThread(() -> triggerPrint(webView));
+        public void printHTML(final String html) {
+            runOnUiThread(() -> {
+                // Créer une WebView invisible pour charger le HTML du ticket
+                printWebView = new WebView(MainActivity.this);
+                printWebView.getSettings().setJavaScriptEnabled(true);
+
+                printWebView.setWebViewClient(new WebViewClient() {
+                    @Override
+                    public void onPageFinished(WebView view, String url) {
+                        // Lancer l'impression Android native
+                        PrintManager printManager = (PrintManager) getSystemService(Context.PRINT_SERVICE);
+                        PrintDocumentAdapter adapter = view.createPrintDocumentAdapter("Ticket LOTATO");
+                        PrintAttributes attrs = new PrintAttributes.Builder()
+                            .setMediaSize(new PrintAttributes.MediaSize(
+                                "THERMAL_80MM", "Thermal 80mm", 3150, 8000))
+                            .setMinMargins(PrintAttributes.Margins.NO_MARGINS)
+                            .build();
+                        printManager.print("Ticket LOTATO", adapter, attrs);
+                    }
+                });
+
+                printWebView.loadDataWithBaseURL(
+                    "https://lotato1.onrender.com",
+                    html,
+                    "text/html",
+                    "UTF-8",
+                    null
+                );
+            });
         }
     }
 
