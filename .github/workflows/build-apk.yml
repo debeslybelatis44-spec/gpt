@@ -25,6 +25,28 @@ jobs:
       - name: Install build tools
         run: sdkmanager "build-tools;34.0.0"
 
+      - name: Download LOTATO icons from server
+        run: |
+          mkdir -p app/src/main/res/mipmap-mdpi
+          mkdir -p app/src/main/res/mipmap-hdpi
+          mkdir -p app/src/main/res/mipmap-xhdpi
+          mkdir -p app/src/main/res/mipmap-xxhdpi
+          mkdir -p app/src/main/res/mipmap-xxxhdpi
+
+          curl -L "https://lotato1.onrender.com/48.png"  -o app/src/main/res/mipmap-mdpi/ic_launcher.png    || curl -L "https://lotato1.onrender.com/72.png"  -o app/src/main/res/mipmap-mdpi/ic_launcher.png
+          curl -L "https://lotato1.onrender.com/72.png"  -o app/src/main/res/mipmap-hdpi/ic_launcher.png
+          curl -L "https://lotato1.onrender.com/96.png"  -o app/src/main/res/mipmap-xhdpi/ic_launcher.png
+          curl -L "https://lotato1.onrender.com/144.png" -o app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+          curl -L "https://lotato1.onrender.com/192.png" -o app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+
+          cp app/src/main/res/mipmap-mdpi/ic_launcher.png    app/src/main/res/mipmap-mdpi/ic_launcher_round.png
+          cp app/src/main/res/mipmap-hdpi/ic_launcher.png    app/src/main/res/mipmap-hdpi/ic_launcher_round.png
+          cp app/src/main/res/mipmap-xhdpi/ic_launcher.png   app/src/main/res/mipmap-xhdpi/ic_launcher_round.png
+          cp app/src/main/res/mipmap-xxhdpi/ic_launcher.png  app/src/main/res/mipmap-xxhdpi/ic_launcher_round.png
+          cp app/src/main/res/mipmap-xxxhdpi/ic_launcher.png app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png
+
+          echo "✅ Icônes LOTATO téléchargées"
+
       - name: Install Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
