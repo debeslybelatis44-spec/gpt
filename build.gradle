@@ -1,40 +1,16 @@
-plugins {
-    id 'com.android.application'
-}
-
-android {
-    namespace 'com.lotato.app'
-    compileSdk 34
-
-    defaultConfig {
-        applicationId "com.lotato.app"
-        minSdk 21
-        targetSdk 34
-        versionCode 1
-        versionName "1.0"
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
     }
-
-    // ✅ Activer AIDL pour Sunmi
-    buildFeatures {
-        aidl true
-    }
-
-    buildTypes {
-        debug {
-            minifyEnabled false
-        }
-        release {
-            minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-        }
-    }
-
-    compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_8
-        targetCompatibility JavaVersion.VERSION_1_8
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.2.2'
     }
 }
 
-dependencies {
-    // Rien d'externe — AIDL Sunmi est natif sur l'appareil
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
 }
