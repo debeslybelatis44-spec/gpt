@@ -1,25 +1,55 @@
 package com.lotato.app;
 
 import android.app.Activity;
+import android.content.ComponentName;
+import android.content.Context;
+import android.content.Intent;
+import android.content.ServiceConnection;
 import android.os.Bundle;
-import android.print.PrintAttributes;
-import android.print.PrintDocumentAdapter;
-import android.print.PrintManager;
+import android.os.IBinder;
+import android.os.RemoteException;
+import android.webkit.JavascriptInterface;
+import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
-import android.webkit.WebChromeClient;
-import android.webkit.JavascriptInterface;
-import android.content.Context;
+import android.util.Log;
+
+import woyou.aidlservice.jiuiv5.IWoyouService;
 
 public class MainActivity extends Activity {
 
+    private static final String TAG = "LOTATO_PRINT";
     private WebView webView;
-    private WebView printWebView;
+    private IWoyouService woyouService;
+    private boolean printerConnected = false;
+
+    private ServiceConnection serviceConnection = new ServiceConnection() {
+        @Override
+        public void onServiceConnected(ComponentName name, IBinder service) {
+            woyouService = IWoyouService.Stub.asInterface(service);
+            printerConnected = true;
+            Log.d(TAG, "✅ Service Sunmi connecté");
+            runOnUiThread(() -> {
+                if (webView != null) {
+                    webView.evaluateJavascript("window.sunmiPrinterReady = true;", null);
+                }
+            });
+        }
+
+        @Override
+        public void onServiceDisconnected(ComponentName name) {
+            woyouService = null;
+            printerConnected = false;
+            Log.d(TAG, "❌ Service Sunmi déconnecté");
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        bindSunmiService();
 
         webView = new WebView(this);
         setContentView(webView);
@@ -35,58 +65,102 @@ public class MainActivity extends Activity {
         settings.setAllowFileAccess(true);
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
 
-        // ✅ Injecter l'interface AndroidPrint accessible depuis cartManager.js
-        webView.addJavascriptInterface(new PrintBridge(), "AndroidPrint");
-
+        webView.addJavascriptInterface(new SunmiBridge(), "AndroidPrint");
         webView.setWebViewClient(new WebViewClient());
         webView.setWebChromeClient(new WebChromeClient());
-
         webView.loadUrl("https://lotato1.onrender.com/agent1.html");
     }
 
-    // ✅ Bridge appelé par window.AndroidPrint.printHTML(html) dans cartManager.js
-    public class PrintBridge {
+    private void bindSunmiService() {
+        Intent intent = new Intent();
+        intent.setPackage("woyou.aidlservice.jiuiv5");
+        intent.setAction("woyou.aidlservice.jiuiv5.IWoyouService");
+        boolean bound = bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE);
+        Log.d(TAG, "Liaison service Sunmi: " + bound);
+    }
+
+    public class SunmiBridge {
 
         @JavascriptInterface
         public void printHTML(final String html) {
             runOnUiThread(() -> {
-
-                // WebView invisible pour charger le HTML du ticket
-                printWebView = new WebView(MainActivity.this);
-                WebSettings ps = printWebView.getSettings();
-                ps.setJavaScriptEnabled(true);
-                ps.setDomStorageEnabled(true);
-
-                printWebView.setWebViewClient(new WebViewClient() {
-                    @Override
-                    public void onPageFinished(WebView view, String url) {
-                        // Déclencher l'impression Android native
-                        PrintManager printManager = (PrintManager) getSystemService(Context.PRINT_SERVICE);
-                        PrintDocumentAdapter adapter = view.createPrintDocumentAdapter("Ticket LOTATO");
-
-                        PrintAttributes attrs = new PrintAttributes.Builder()
-                            .setMediaSize(new PrintAttributes.MediaSize(
-                                "THERMAL_80MM", "Thermal 80mm",
-                                3150,  // 80mm en milli-inches
-                                8000   // hauteur auto
-                            ))
-                            .setMinMargins(PrintAttributes.Margins.NO_MARGINS)
-                            .build();
-
-                        printManager.print("Ticket LOTATO", adapter, attrs);
-                    }
-                });
-
-                // Charger le HTML avec la base URL du serveur
-                // pour que les images (logo) se chargent correctement
-                printWebView.loadDataWithBaseURL(
-                    "https://lotato1.onrender.com",
-                    html,
-                    "text/html",
-                    "UTF-8",
-                    null
-                );
+                if (printerConnected && woyouService != null) {
+                    printWithSunmi(html);
+                } else {
+                    bindSunmiService();
+                    webView.postDelayed(() -> {
+                        if (printerConnected && woyouService != null) {
+                            printWithSunmi(html);
+                        } else {
+                            webView.evaluateJavascript(
+                                "alert('Imprimante Sunmi non disponible.');", null);
+                        }
+                    }, 1500);
+                }
             });
+        }
+
+        @JavascriptInterface
+        public boolean isPrinterReady() {
+            return printerConnected && woyouService != null;
+        }
+    }
+
+    private void printWithSunmi(String html) {
+        try {
+            woyouService.printerInit(null);
+
+            String text = html
+                .replaceAll("(?s)<style[^>]*>.*?</style>", "")
+                .replaceAll("<br\\s*/?>", "\n")
+                .replaceAll("<div[^>]*>", "\n")
+                .replaceAll("<p[^>]*>", "\n")
+                .replaceAll("<[^>]+>", "")
+                .replaceAll("&nbsp;", " ")
+                .replaceAll("&amp;", "&")
+                .replaceAll("&lt;", "<")
+                .replaceAll("&gt;", ">")
+                .replaceAll("\n{3,}", "\n\n")
+                .trim();
+
+            String[] lines = text.split("\n");
+            boolean headerDone = false;
+
+            for (String line : lines) {
+                line = line.trim();
+                if (line.isEmpty()) continue;
+
+                if (!headerDone && (line.toUpperCase().contains("LOTATO"))) {
+                    woyouService.setAlignment(1, null);
+                    woyouService.setFontSize(32, null);
+                    woyouService.printTextWithFont(line + "\n", null, 32, null);
+                    woyouService.setFontSize(24, null);
+                    headerDone = true;
+                } else if (line.toUpperCase().contains("TOTAL")) {
+                    woyouService.setAlignment(0, null);
+                    woyouService.setFontSize(28, null);
+                    woyouService.printText(line + "\n", null);
+                    woyouService.setFontSize(24, null);
+                } else if (line.matches("[-=]{3,}")) {
+                    woyouService.printText("--------------------------------\n", null);
+                } else {
+                    woyouService.setAlignment(0, null);
+                    woyouService.setFontSize(24, null);
+                    woyouService.printText(line + "\n", null);
+                }
+            }
+
+            woyouService.lineWrap(3, null);
+            woyouService.cutPaper(null);
+
+            Log.d(TAG, "✅ Impression Sunmi terminée");
+
+        } catch (RemoteException e) {
+            Log.e(TAG, "Erreur: " + e.getMessage());
+            final String msg = e.getMessage() != null ? e.getMessage().replace("'", "") : "Erè enkoni";
+            runOnUiThread(() ->
+                webView.evaluateJavascript("alert('Erè enpresyon: " + msg + "');", null)
+            );
         }
     }
 
@@ -101,12 +175,8 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        if (webView != null) {
-            webView.destroy();
-        }
-        if (printWebView != null) {
-            printWebView.destroy();
-        }
+        try { unbindService(serviceConnection); } catch (Exception ignored) {}
+        if (webView != null) webView.destroy();
         super.onDestroy();
     }
 }
