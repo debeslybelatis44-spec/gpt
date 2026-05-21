@@ -19,10 +19,13 @@ import woyou.aidlservice.jiuiv5.IWoyouService;
 
 public class MainActivity extends Activity {
 
-    private static final String TAG = "LOTATO_PRINT";
+    private static final String TAG = "LOTATO";
     private WebView webView;
     private IWoyouService woyouService;
     private boolean printerConnected = false;
+
+    // File d'attente si impression demandée avant connexion
+    private String pendingPrintHTML = null;
 
     private ServiceConnection serviceConnection = new ServiceConnection() {
         @Override
@@ -30,18 +33,22 @@ public class MainActivity extends Activity {
             woyouService = IWoyouService.Stub.asInterface(service);
             printerConnected = true;
             Log.d(TAG, "✅ Service Sunmi connecté");
-            runOnUiThread(() -> {
-                if (webView != null) {
-                    webView.evaluateJavascript("window.sunmiPrinterReady = true;", null);
-                }
-            });
+
+            // S'il y avait une impression en attente, l'exécuter maintenant
+            if (pendingPrintHTML != null) {
+                final String html = pendingPrintHTML;
+                pendingPrintHTML = null;
+                runOnUiThread(() -> printWithSunmi(html));
+            }
         }
 
         @Override
         public void onServiceDisconnected(ComponentName name) {
             woyouService = null;
             printerConnected = false;
-            Log.d(TAG, "❌ Service Sunmi déconnecté");
+            Log.d(TAG, "❌ Service Sunmi déconnecté - tentative reconnexion");
+            // Reconnexion automatique
+            bindSunmiService();
         }
     };
 
@@ -49,6 +56,7 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        // Lier Sunmi dès le démarrage
         bindSunmiService();
 
         webView = new WebView(this);
@@ -72,30 +80,41 @@ public class MainActivity extends Activity {
     }
 
     private void bindSunmiService() {
-        Intent intent = new Intent();
-        intent.setPackage("woyou.aidlservice.jiuiv5");
-        intent.setAction("woyou.aidlservice.jiuiv5.IWoyouService");
-        boolean bound = bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE);
-        Log.d(TAG, "Liaison service Sunmi: " + bound);
+        try {
+            Intent intent = new Intent();
+            intent.setPackage("woyou.aidlservice.jiuiv5");
+            intent.setAction("woyou.aidlservice.jiuiv5.IWoyouService");
+            boolean bound = bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE);
+            Log.d(TAG, "Liaison Sunmi: " + bound);
+        } catch (Exception e) {
+            Log.e(TAG, "Erreur liaison Sunmi: " + e.getMessage());
+        }
     }
 
     public class SunmiBridge {
 
         @JavascriptInterface
         public void printHTML(final String html) {
+            Log.d(TAG, "printHTML appelé - printerConnected=" + printerConnected);
             runOnUiThread(() -> {
                 if (printerConnected && woyouService != null) {
+                    // Service prêt, imprimer directement
                     printWithSunmi(html);
                 } else {
+                    // Mettre en file d'attente et reconnecter
+                    Log.w(TAG, "Service pas prêt - mise en attente");
+                    pendingPrintHTML = html;
                     bindSunmiService();
+                    // Timeout 3 secondes
                     webView.postDelayed(() -> {
-                        if (printerConnected && woyouService != null) {
-                            printWithSunmi(html);
-                        } else {
+                        if (pendingPrintHTML != null) {
+                            pendingPrintHTML = null;
                             webView.evaluateJavascript(
-                                "alert('Imprimante Sunmi non disponible.');", null);
+                                "alert('Imprimante Sunmi pa disponib. Reesye.');",
+                                null
+                            );
                         }
-                    }, 1500);
+                    }, 3000);
                 }
             });
         }
@@ -108,13 +127,15 @@ public class MainActivity extends Activity {
 
     private void printWithSunmi(String html) {
         try {
+            // Initialiser l'imprimante
             woyouService.printerInit(null);
 
+            // Nettoyer le HTML pour extraire le texte
             String text = html
                 .replaceAll("(?s)<style[^>]*>.*?</style>", "")
                 .replaceAll("<br\\s*/?>", "\n")
-                .replaceAll("<div[^>]*>", "\n")
-                .replaceAll("<p[^>]*>", "\n")
+                .replaceAll("</div>", "\n")
+                .replaceAll("</p>", "\n")
                 .replaceAll("<[^>]+>", "")
                 .replaceAll("&nbsp;", " ")
                 .replaceAll("&amp;", "&")
@@ -124,40 +145,48 @@ public class MainActivity extends Activity {
                 .trim();
 
             String[] lines = text.split("\n");
-            boolean headerDone = false;
 
             for (String line : lines) {
                 line = line.trim();
                 if (line.isEmpty()) continue;
 
-                if (!headerDone && (line.toUpperCase().contains("LOTATO"))) {
+                // Header - nom loterie centré en grand
+                if (line.toUpperCase().contains("LOTATO")) {
                     woyouService.setAlignment(1, null);
-                    woyouService.setFontSize(32, null);
-                    woyouService.printTextWithFont(line + "\n", null, 32, null);
-                    woyouService.setFontSize(24, null);
-                    headerDone = true;
-                } else if (line.toUpperCase().contains("TOTAL")) {
-                    woyouService.setAlignment(0, null);
                     woyouService.setFontSize(28, null);
                     woyouService.printText(line + "\n", null);
+                    woyouService.setAlignment(0, null);
                     woyouService.setFontSize(24, null);
-                } else if (line.matches("[-=]{3,}")) {
+                }
+                // Ligne TOTAL en gras
+                else if (line.toUpperCase().startsWith("TOTAL")) {
+                    woyouService.setFontSize(26, null);
+                    woyouService.printText(line + "\n", null);
+                    woyouService.setFontSize(24, null);
+                }
+                // Séparateur
+                else if (line.matches("[-=]{3,}")) {
                     woyouService.printText("--------------------------------\n", null);
-                } else {
+                }
+                // Ligne normale
+                else {
                     woyouService.setAlignment(0, null);
                     woyouService.setFontSize(24, null);
                     woyouService.printText(line + "\n", null);
                 }
             }
 
-            woyouService.lineWrap(3, null);
+            // Avancer le papier et couper
+            woyouService.lineWrap(4, null);
             woyouService.cutPaper(null);
 
-            Log.d(TAG, "✅ Impression Sunmi terminée");
+            Log.d(TAG, "✅ Impression terminée");
 
         } catch (RemoteException e) {
-            Log.e(TAG, "Erreur: " + e.getMessage());
-            final String msg = e.getMessage() != null ? e.getMessage().replace("'", "") : "Erè enkoni";
+            Log.e(TAG, "Erreur impression: " + e.getMessage());
+            final String msg = (e.getMessage() != null)
+                ? e.getMessage().replace("'", "").replace("\"", "")
+                : "Erè enkoni";
             runOnUiThread(() ->
                 webView.evaluateJavascript("alert('Erè enpresyon: " + msg + "');", null)
             );
@@ -175,7 +204,9 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        try { unbindService(serviceConnection); } catch (Exception ignored) {}
+        try {
+            unbindService(serviceConnection);
+        } catch (Exception ignored) {}
         if (webView != null) webView.destroy();
         super.onDestroy();
     }
