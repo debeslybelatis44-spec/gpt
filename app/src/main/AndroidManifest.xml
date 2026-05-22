@@ -2,6 +2,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.BLUETOOTH" />
+
+    <!-- Permission obligatoire pour accéder au service Sunmi -->
+    <queries>
+        <package android:name="woyou.aidlservice.jiuiv5" />
+        <package android:name="com.sunmi.innerprinter" />
+    </queries>
 
     <application
         android:allowBackup="true"
