@@ -25,20 +25,12 @@ public class MainActivity extends Activity {
     private boolean printerConnected = false;
     private String pendingPrintHTML = null;
 
-    // ✅ Les 3 combinaisons possibles sur Sunmi Framework 2.0.0
-    private static final String[][] SUNMI_SERVICES = {
-        {"woyou.aidlservice.jiuiv5", "woyou.aidlservice.jiuiv5.IWoyouService"},
-        {"com.sunmi.innerprinter",   "com.sunmi.innerprinter.ISunmiPrinterService"},
-        {"woyou.aidlservice.jiuiv5", "woyou.aidlservice.jiuiv5.IWoyouService"}
-    };
-    private int serviceAttempt = 0;
-
     private ServiceConnection serviceConnection = new ServiceConnection() {
         @Override
         public void onServiceConnected(ComponentName name, IBinder service) {
             woyouService = IWoyouService.Stub.asInterface(service);
             printerConnected = true;
-            Log.d(TAG, "✅ Sunmi connecté via: " + name.getPackageName());
+            Log.d(TAG, "✅ Sunmi connecté: " + name.flattenToString());
 
             if (pendingPrintHTML != null) {
                 final String html = pendingPrintHTML;
@@ -59,7 +51,8 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        tryBindSunmiService(0);
+        // Essayer de lier le service Sunmi avec ComponentName explicite
+        bindSunmiPrinter();
 
         webView = new WebView(this);
         setContentView(webView);
@@ -80,30 +73,54 @@ public class MainActivity extends Activity {
         webView.loadUrl("https://lotato1.onrender.com/agent1.html");
     }
 
-    // ✅ Essayer chaque combinaison de service jusqu'à trouver la bonne
-    private void tryBindSunmiService(int attempt) {
-        if (attempt >= SUNMI_SERVICES.length) {
-            Log.e(TAG, "Aucun service Sunmi trouvé après " + attempt + " tentatives");
-            return;
+    private void bindSunmiPrinter() {
+        // Méthode 1 — ComponentName explicite (la plus fiable sur Framework 2.0.0)
+        try {
+            Intent intent1 = new Intent();
+            intent1.setComponent(new ComponentName(
+                "woyou.aidlservice.jiuiv5",
+                "woyou.aidlservice.jiuiv5.InnerPrinterService"
+            ));
+            boolean b1 = bindService(intent1, serviceConnection, Context.BIND_AUTO_CREATE);
+            Log.d(TAG, "Méthode 1 (ComponentName explicite): " + b1);
+            if (b1) return;
+        } catch (Exception e) {
+            Log.e(TAG, "M1 erreur: " + e.getMessage());
         }
 
-        String pkg    = SUNMI_SERVICES[attempt][0];
-        String action = SUNMI_SERVICES[attempt][1];
-
+        // Méthode 2 — Action + Package
         try {
-            Intent intent = new Intent();
-            intent.setPackage(pkg);
-            intent.setAction(action);
-            boolean bound = bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE);
-            Log.d(TAG, "Tentative " + attempt + " [" + pkg + "]: " + bound);
-
-            if (!bound) {
-                // Essayer la combinaison suivante
-                tryBindSunmiService(attempt + 1);
-            }
+            Intent intent2 = new Intent("woyou.aidlservice.jiuiv5.IWoyouService");
+            intent2.setPackage("woyou.aidlservice.jiuiv5");
+            boolean b2 = bindService(intent2, serviceConnection, Context.BIND_AUTO_CREATE);
+            Log.d(TAG, "Méthode 2 (Action+Package): " + b2);
+            if (b2) return;
         } catch (Exception e) {
-            Log.e(TAG, "Erreur tentative " + attempt + ": " + e.getMessage());
-            tryBindSunmiService(attempt + 1);
+            Log.e(TAG, "M2 erreur: " + e.getMessage());
+        }
+
+        // Méthode 3 — com.sunmi.innerprinter (Framework 2.x)
+        try {
+            Intent intent3 = new Intent();
+            intent3.setComponent(new ComponentName(
+                "com.sunmi.innerprinter",
+                "com.sunmi.innerprinter.InnerPrinterService"
+            ));
+            boolean b3 = bindService(intent3, serviceConnection, Context.BIND_AUTO_CREATE);
+            Log.d(TAG, "Méthode 3 (sunmi.innerprinter): " + b3);
+            if (b3) return;
+        } catch (Exception e) {
+            Log.e(TAG, "M3 erreur: " + e.getMessage());
+        }
+
+        // Méthode 4 — Action seule
+        try {
+            Intent intent4 = new Intent("com.sunmi.innerprinter.ISunmiPrinterService");
+            intent4.setPackage("com.sunmi.innerprinter");
+            boolean b4 = bindService(intent4, serviceConnection, Context.BIND_AUTO_CREATE);
+            Log.d(TAG, "Méthode 4 (innerprinter action): " + b4);
+        } catch (Exception e) {
+            Log.e(TAG, "M4 erreur: " + e.getMessage());
         }
     }
 
@@ -111,17 +128,15 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public void printHTML(final String html) {
-            Log.d(TAG, "printHTML - connecté=" + printerConnected);
+            Log.d(TAG, "printHTML appelé - connecté=" + printerConnected);
             runOnUiThread(() -> {
                 if (printerConnected && woyouService != null) {
                     printWithSunmi(html);
                 } else {
                     pendingPrintHTML = html;
-                    tryBindSunmiService(0);
-                    // Attendre 4 secondes max
+                    bindSunmiPrinter();
                     webView.postDelayed(() -> {
                         if (pendingPrintHTML != null) {
-                            // Dernière chance - essayer impression directe
                             if (printerConnected && woyouService != null) {
                                 final String h = pendingPrintHTML;
                                 pendingPrintHTML = null;
@@ -129,7 +144,7 @@ public class MainActivity extends Activity {
                             } else {
                                 pendingPrintHTML = null;
                                 webView.evaluateJavascript(
-                                    "alert('Imprimante pa disponib. Tcheke ke Sunmi aktif epi reesye.');",
+                                    "alert('Erè: Sèvis Sunmi pa jwenn. Rekomanse app la.');",
                                     null
                                 );
                             }
@@ -142,12 +157,6 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public boolean isPrinterReady() {
             return printerConnected && woyouService != null;
-        }
-
-        // ✅ Méthode de diagnostic - retourne l'état au JS
-        @JavascriptInterface
-        public String getDiagnostic() {
-            return "connected=" + printerConnected + " service=" + (woyouService != null);
         }
     }
 
@@ -194,7 +203,9 @@ public class MainActivity extends Activity {
 
         } catch (RemoteException e) {
             Log.e(TAG, "Erreur impression: " + e.getMessage());
-            final String msg = e.getMessage() != null ? e.getMessage().replace("'","") : "Erè enkoni";
+            final String msg = e.getMessage() != null
+                ? e.getMessage().replace("'", "")
+                : "Erè enkoni";
             runOnUiThread(() ->
                 webView.evaluateJavascript("alert('Erè enpresyon: " + msg + "');", null)
             );
