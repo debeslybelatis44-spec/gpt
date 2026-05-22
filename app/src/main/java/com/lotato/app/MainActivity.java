@@ -50,8 +50,6 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-
-        // Essayer de lier le service Sunmi avec ComponentName explicite
         bindSunmiPrinter();
 
         webView = new WebView(this);
@@ -74,61 +72,41 @@ public class MainActivity extends Activity {
     }
 
     private void bindSunmiPrinter() {
-        // Méthode 1 — ComponentName explicite (la plus fiable sur Framework 2.0.0)
         try {
-            Intent intent1 = new Intent();
-            intent1.setComponent(new ComponentName(
+            Intent i = new Intent();
+            i.setComponent(new ComponentName(
                 "woyou.aidlservice.jiuiv5",
                 "woyou.aidlservice.jiuiv5.InnerPrinterService"
             ));
-            boolean b1 = bindService(intent1, serviceConnection, Context.BIND_AUTO_CREATE);
-            Log.d(TAG, "Méthode 1 (ComponentName explicite): " + b1);
-            if (b1) return;
-        } catch (Exception e) {
-            Log.e(TAG, "M1 erreur: " + e.getMessage());
-        }
+            boolean b = bindService(i, serviceConnection, Context.BIND_AUTO_CREATE);
+            Log.d(TAG, "Bind M1: " + b);
+            if (b) return;
+        } catch (Exception e) { Log.e(TAG, "M1: " + e.getMessage()); }
 
-        // Méthode 2 — Action + Package
         try {
-            Intent intent2 = new Intent("woyou.aidlservice.jiuiv5.IWoyouService");
-            intent2.setPackage("woyou.aidlservice.jiuiv5");
-            boolean b2 = bindService(intent2, serviceConnection, Context.BIND_AUTO_CREATE);
-            Log.d(TAG, "Méthode 2 (Action+Package): " + b2);
-            if (b2) return;
-        } catch (Exception e) {
-            Log.e(TAG, "M2 erreur: " + e.getMessage());
-        }
+            Intent i = new Intent("woyou.aidlservice.jiuiv5.IWoyouService");
+            i.setPackage("woyou.aidlservice.jiuiv5");
+            boolean b = bindService(i, serviceConnection, Context.BIND_AUTO_CREATE);
+            Log.d(TAG, "Bind M2: " + b);
+            if (b) return;
+        } catch (Exception e) { Log.e(TAG, "M2: " + e.getMessage()); }
 
-        // Méthode 3 — com.sunmi.innerprinter (Framework 2.x)
         try {
-            Intent intent3 = new Intent();
-            intent3.setComponent(new ComponentName(
+            Intent i = new Intent();
+            i.setComponent(new ComponentName(
                 "com.sunmi.innerprinter",
                 "com.sunmi.innerprinter.InnerPrinterService"
             ));
-            boolean b3 = bindService(intent3, serviceConnection, Context.BIND_AUTO_CREATE);
-            Log.d(TAG, "Méthode 3 (sunmi.innerprinter): " + b3);
-            if (b3) return;
-        } catch (Exception e) {
-            Log.e(TAG, "M3 erreur: " + e.getMessage());
-        }
-
-        // Méthode 4 — Action seule
-        try {
-            Intent intent4 = new Intent("com.sunmi.innerprinter.ISunmiPrinterService");
-            intent4.setPackage("com.sunmi.innerprinter");
-            boolean b4 = bindService(intent4, serviceConnection, Context.BIND_AUTO_CREATE);
-            Log.d(TAG, "Méthode 4 (innerprinter action): " + b4);
-        } catch (Exception e) {
-            Log.e(TAG, "M4 erreur: " + e.getMessage());
-        }
+            boolean b = bindService(i, serviceConnection, Context.BIND_AUTO_CREATE);
+            Log.d(TAG, "Bind M3: " + b);
+        } catch (Exception e) { Log.e(TAG, "M3: " + e.getMessage()); }
     }
 
     public class SunmiBridge {
 
         @JavascriptInterface
         public void printHTML(final String html) {
-            Log.d(TAG, "printHTML appelé - connecté=" + printerConnected);
+            Log.d(TAG, "printHTML - connecté=" + printerConnected);
             runOnUiThread(() -> {
                 if (printerConnected && woyouService != null) {
                     printWithSunmi(html);
@@ -144,9 +122,7 @@ public class MainActivity extends Activity {
                             } else {
                                 pendingPrintHTML = null;
                                 webView.evaluateJavascript(
-                                    "alert('Erè: Sèvis Sunmi pa jwenn. Rekomanse app la.');",
-                                    null
-                                );
+                                    "alert('Sèvis Sunmi pa jwenn. Rekomanse app la.');", null);
                             }
                         }
                     }, 4000);
@@ -162,8 +138,10 @@ public class MainActivity extends Activity {
 
     private void printWithSunmi(String html) {
         try {
+            // Init imprimante
             woyouService.printerInit(null);
 
+            // Extraire texte propre du HTML
             String text = html
                 .replaceAll("(?s)<style[^>]*>.*?</style>", "")
                 .replaceAll("<br\\s*/?>", "\n")
@@ -172,33 +150,26 @@ public class MainActivity extends Activity {
                 .replaceAll("<[^>]+>", "")
                 .replaceAll("&nbsp;", " ")
                 .replaceAll("&amp;", "&")
+                .replaceAll("&lt;", "<")
+                .replaceAll("&gt;", ">")
                 .replaceAll("\n{3,}", "\n\n")
                 .trim();
 
+            // ✅ Utiliser UNIQUEMENT printText — pas setFontSize ni setAlignment
+            // Ces commandes causent le crash sur Firmware 378
             for (String line : text.split("\n")) {
                 line = line.trim();
-                if (line.isEmpty()) continue;
-
-                if (line.toUpperCase().contains("LOTATO")) {
-                    woyouService.setAlignment(1, null);
-                    woyouService.setFontSize(28, null);
-                    woyouService.printText(line + "\n", null);
-                    woyouService.setAlignment(0, null);
-                    woyouService.setFontSize(24, null);
-                } else if (line.toUpperCase().startsWith("TOTAL")) {
-                    woyouService.setFontSize(26, null);
-                    woyouService.printText(line + "\n", null);
-                    woyouService.setFontSize(24, null);
-                } else if (line.matches("[-=]{3,}")) {
-                    woyouService.printText("--------------------------------\n", null);
-                } else {
-                    woyouService.setFontSize(24, null);
-                    woyouService.printText(line + "\n", null);
+                if (line.isEmpty()) {
+                    woyouService.printText("\n", null);
+                    continue;
                 }
+                woyouService.printText(line + "\n", null);
             }
 
+            // Avancer le papier et couper
             woyouService.lineWrap(4, null);
             woyouService.cutPaper(null);
+
             Log.d(TAG, "✅ Impression OK");
 
         } catch (RemoteException e) {
@@ -207,7 +178,7 @@ public class MainActivity extends Activity {
                 ? e.getMessage().replace("'", "")
                 : "Erè enkoni";
             runOnUiThread(() ->
-                webView.evaluateJavascript("alert('Erè enpresyon: " + msg + "');", null)
+                webView.evaluateJavascript("alert('Erè: " + msg + "');", null)
             );
         }
     }
