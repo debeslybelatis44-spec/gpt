@@ -28,9 +28,5 @@ interface IWoyouService {
     void cutPaper(in ICallback callback);
     int getPrinterStatus();
     void sendRAWData(in byte[] bytes, in ICallback callback);
-    void openDrawer();
-    void closeDrawer();
-    boolean isDrawerOpen();
     void printBitmapCustom(in Bitmap bitmap, in int type, in ICallback callback);
 }
-
