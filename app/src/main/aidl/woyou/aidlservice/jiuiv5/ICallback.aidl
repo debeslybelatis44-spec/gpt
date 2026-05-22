@@ -7,4 +7,3 @@ interface ICallback {
     void onRaiseException(in int code, in String msg);
     void onPrintResult(in int code, in String msg);
 }
-
