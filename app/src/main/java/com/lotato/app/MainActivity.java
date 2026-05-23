@@ -17,10 +17,6 @@ import android.util.Log;
 
 import woyou.aidlservice.jiuiv5.IWoyouService;
 
-import java.io.UnsupportedEncodingException;
-import java.util.ArrayList;
-import java.util.List;
-
 public class MainActivity extends Activity {
 
     private static final String TAG = "LOTATO";
@@ -137,97 +133,71 @@ public class MainActivity extends Activity {
         }
     }
 
-    // ✅ Construire commandes ESC/POS en bytes — évite tout problème d'encodage
-    private byte[] buildEscPosData(String html) {
-        // Nettoyer HTML → texte pur
-        String text = html
-            .replaceAll("(?s)<style[^>]*>.*?</style>", "")
-            .replaceAll("<br\\s*/?>", "\n")
-            .replaceAll("</div>", "\n")
-            .replaceAll("</p>", "\n")
-            .replaceAll("<[^>]+>", "")
-            .replaceAll("&nbsp;", " ")
-            .replaceAll("&amp;", "&")
-            .replaceAll("&lt;", "<")
-            .replaceAll("&gt;", ">")
-            .replaceAll("\n{3,}", "\n\n")
-            .trim();
-
-        // Remplacer caractères créoles non-ASCII par equivalents ASCII
-        text = text
-            .replace("è", "e").replace("é", "e").replace("ê", "e")
-            .replace("à", "a").replace("â", "a")
-            .replace("ò", "o").replace("ô", "o")
-            .replace("ù", "u").replace("û", "u")
-            .replace("î", "i").replace("ï", "i")
-            .replace("ç", "c")
-            .replace("È", "E").replace("É", "E")
-            .replace("À", "A").replace("Â", "A")
-            .replace("'", "'").replace("\u2019", "'")
-            .replace("\u00AB", "\"").replace("\u00BB", "\"");
-
-        List<Byte> bytes = new ArrayList<>();
-
-        // ESC @ — init imprimante
-        addBytes(bytes, new byte[]{0x1B, 0x40});
-
-        String[] lines = text.split("\n");
-        for (String line : lines) {
-            line = line.trim();
-
-            // Ligne vide
-            if (line.isEmpty()) {
-                addBytes(bytes, "\n".getBytes());
-                continue;
-            }
-
-            // Séparateur
-            if (line.matches("[-=]{3,}")) {
-                addBytes(bytes, "--------------------------------\n".getBytes());
-                continue;
-            }
-
-            // Ligne normale
-            try {
-                addBytes(bytes, (line + "\n").getBytes("US-ASCII"));
-            } catch (UnsupportedEncodingException e) {
-                addBytes(bytes, (line + "\n").getBytes());
-            }
-        }
-
-        // Avancer papier — ESC d n (4 lignes)
-        addBytes(bytes, new byte[]{0x1B, 0x64, 0x04});
-
-        // Couper papier — GS V (coupe partielle)
-        addBytes(bytes, new byte[]{0x1D, 0x56, 0x01});
-
-        // Convertir List<Byte> → byte[]
-        byte[] result = new byte[bytes.size()];
-        for (int i = 0; i < bytes.size(); i++) {
-            result[i] = bytes.get(i);
-        }
-        return result;
-    }
-
-    private void addBytes(List<Byte> list, byte[] data) {
-        for (byte b : data) list.add(b);
-    }
-
     private void printWithSunmi(String html) {
         try {
-            woyouService.printerInit(null);
+            // Nettoyer HTML
+            String text = html
+                .replaceAll("(?s)<style[^>]*>.*?</style>", "")
+                .replaceAll("<br\\s*/?>", "\n")
+                .replaceAll("</div>", "\n")
+                .replaceAll("</p>", "\n")
+                .replaceAll("<[^>]+>", "")
+                .replaceAll("&nbsp;", " ")
+                .replaceAll("&amp;", "&")
+                .replaceAll("&lt;", "<")
+                .replaceAll("&gt;", ">")
+                .replaceAll("\n{3,}", "\n\n")
+                .trim();
 
-            // ✅ Envoyer en RAW bytes ESC/POS — contourne tous les problèmes d'encodage
-            byte[] data = buildEscPosData(html);
+            // Remplacer accents
+            text = text
+                .replace("\u00e8","e").replace("\u00e9","e").replace("\u00ea","e")
+                .replace("\u00e0","a").replace("\u00e2","a")
+                .replace("\u00f2","o").replace("\u00f4","o")
+                .replace("\u00f9","u").replace("\u00fb","u")
+                .replace("\u00ee","i").replace("\u00ef","i")
+                .replace("\u00e7","c")
+                .replace("\u00c8","E").replace("\u00c9","E")
+                .replace("\u00c0","A").replace("\u00c2","A")
+                .replace("\u2019","'").replace("\u2018","'")
+                .replace("\u00ab","\"").replace("\u00bb","\"");
+
+            // ✅ Construire ESC/POS sans printerInit
+            StringBuilder sb = new StringBuilder();
+
+            // ESC @ reset
+            sb.append((char)0x1B).append((char)0x40);
+
+            // Chaque ligne
+            for (String line : text.split("\n")) {
+                line = line.trim();
+                if (line.isEmpty()) {
+                    sb.append("\n");
+                } else if (line.matches("[-=]{3,}")) {
+                    sb.append("--------------------------------\n");
+                } else {
+                    sb.append(line).append("\n");
+                }
+            }
+
+            // Feed 4 lignes : ESC d 4
+            sb.append((char)0x1B).append((char)0x64).append((char)0x04);
+
+            // Coupe partielle : GS V 1
+            sb.append((char)0x1D).append((char)0x56).append((char)0x01);
+
+            byte[] data = sb.toString().getBytes("ISO-8859-1");
+
+            // ✅ sendRAWData sans printerInit avant
             woyouService.sendRAWData(data, null);
 
-            Log.d(TAG, "✅ Impression RAW envoyée (" + data.length + " bytes)");
+            Log.d(TAG, "✅ RAW envoyé: " + data.length + " bytes");
 
-        } catch (RemoteException e) {
-            Log.e(TAG, "Erreur impression: " + e.getMessage());
+        } catch (Exception e) {
+            Log.e(TAG, "Erreur: " + e.getMessage());
             final String msg = e.getMessage() != null
-                ? e.getMessage().replace("'", "")
-                : "Erè enkoni";
+                ? e.getMessage().replace("'","")
+                : "unknown";
             runOnUiThread(() ->
                 webView.evaluateJavascript("alert('Ere: " + msg + "');", null)
             );
