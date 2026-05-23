@@ -17,6 +17,10 @@ import android.util.Log;
 
 import woyou.aidlservice.jiuiv5.IWoyouService;
 
+import java.io.UnsupportedEncodingException;
+import java.util.ArrayList;
+import java.util.List;
+
 public class MainActivity extends Activity {
 
     private static final String TAG = "LOTATO";
@@ -31,7 +35,6 @@ public class MainActivity extends Activity {
             woyouService = IWoyouService.Stub.asInterface(service);
             printerConnected = true;
             Log.d(TAG, "✅ Sunmi connecté: " + name.flattenToString());
-
             if (pendingPrintHTML != null) {
                 final String html = pendingPrintHTML;
                 pendingPrintHTML = null;
@@ -43,7 +46,6 @@ public class MainActivity extends Activity {
         public void onServiceDisconnected(ComponentName name) {
             woyouService = null;
             printerConnected = false;
-            Log.w(TAG, "Sunmi déconnecté");
         }
     };
 
@@ -103,7 +105,6 @@ public class MainActivity extends Activity {
     }
 
     public class SunmiBridge {
-
         @JavascriptInterface
         public void printHTML(final String html) {
             Log.d(TAG, "printHTML - connecté=" + printerConnected);
@@ -122,7 +123,7 @@ public class MainActivity extends Activity {
                             } else {
                                 pendingPrintHTML = null;
                                 webView.evaluateJavascript(
-                                    "alert('Sèvis Sunmi pa jwenn. Rekomanse app la.');", null);
+                                    "alert('Sèvis Sunmi pa jwenn.');", null);
                             }
                         }
                     }, 4000);
@@ -136,41 +137,91 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void printWithSunmi(String html) {
-        try {
-            // Init imprimante
-            woyouService.printerInit(null);
+    // ✅ Construire commandes ESC/POS en bytes — évite tout problème d'encodage
+    private byte[] buildEscPosData(String html) {
+        // Nettoyer HTML → texte pur
+        String text = html
+            .replaceAll("(?s)<style[^>]*>.*?</style>", "")
+            .replaceAll("<br\\s*/?>", "\n")
+            .replaceAll("</div>", "\n")
+            .replaceAll("</p>", "\n")
+            .replaceAll("<[^>]+>", "")
+            .replaceAll("&nbsp;", " ")
+            .replaceAll("&amp;", "&")
+            .replaceAll("&lt;", "<")
+            .replaceAll("&gt;", ">")
+            .replaceAll("\n{3,}", "\n\n")
+            .trim();
 
-            // Extraire texte propre du HTML
-            String text = html
-                .replaceAll("(?s)<style[^>]*>.*?</style>", "")
-                .replaceAll("<br\\s*/?>", "\n")
-                .replaceAll("</div>", "\n")
-                .replaceAll("</p>", "\n")
-                .replaceAll("<[^>]+>", "")
-                .replaceAll("&nbsp;", " ")
-                .replaceAll("&amp;", "&")
-                .replaceAll("&lt;", "<")
-                .replaceAll("&gt;", ">")
-                .replaceAll("\n{3,}", "\n\n")
-                .trim();
+        // Remplacer caractères créoles non-ASCII par equivalents ASCII
+        text = text
+            .replace("è", "e").replace("é", "e").replace("ê", "e")
+            .replace("à", "a").replace("â", "a")
+            .replace("ò", "o").replace("ô", "o")
+            .replace("ù", "u").replace("û", "u")
+            .replace("î", "i").replace("ï", "i")
+            .replace("ç", "c")
+            .replace("È", "E").replace("É", "E")
+            .replace("À", "A").replace("Â", "A")
+            .replace("'", "'").replace("\u2019", "'")
+            .replace("\u00AB", "\"").replace("\u00BB", "\"");
 
-            // ✅ Utiliser UNIQUEMENT printText — pas setFontSize ni setAlignment
-            // Ces commandes causent le crash sur Firmware 378
-            for (String line : text.split("\n")) {
-                line = line.trim();
-                if (line.isEmpty()) {
-                    woyouService.printText("\n", null);
-                    continue;
-                }
-                woyouService.printText(line + "\n", null);
+        List<Byte> bytes = new ArrayList<>();
+
+        // ESC @ — init imprimante
+        addBytes(bytes, new byte[]{0x1B, 0x40});
+
+        String[] lines = text.split("\n");
+        for (String line : lines) {
+            line = line.trim();
+
+            // Ligne vide
+            if (line.isEmpty()) {
+                addBytes(bytes, "\n".getBytes());
+                continue;
             }
 
-            // Avancer le papier et couper
-            woyouService.lineWrap(4, null);
-            woyouService.cutPaper(null);
+            // Séparateur
+            if (line.matches("[-=]{3,}")) {
+                addBytes(bytes, "--------------------------------\n".getBytes());
+                continue;
+            }
 
-            Log.d(TAG, "✅ Impression OK");
+            // Ligne normale
+            try {
+                addBytes(bytes, (line + "\n").getBytes("US-ASCII"));
+            } catch (UnsupportedEncodingException e) {
+                addBytes(bytes, (line + "\n").getBytes());
+            }
+        }
+
+        // Avancer papier — ESC d n (4 lignes)
+        addBytes(bytes, new byte[]{0x1B, 0x64, 0x04});
+
+        // Couper papier — GS V (coupe partielle)
+        addBytes(bytes, new byte[]{0x1D, 0x56, 0x01});
+
+        // Convertir List<Byte> → byte[]
+        byte[] result = new byte[bytes.size()];
+        for (int i = 0; i < bytes.size(); i++) {
+            result[i] = bytes.get(i);
+        }
+        return result;
+    }
+
+    private void addBytes(List<Byte> list, byte[] data) {
+        for (byte b : data) list.add(b);
+    }
+
+    private void printWithSunmi(String html) {
+        try {
+            woyouService.printerInit(null);
+
+            // ✅ Envoyer en RAW bytes ESC/POS — contourne tous les problèmes d'encodage
+            byte[] data = buildEscPosData(html);
+            woyouService.sendRAWData(data, null);
+
+            Log.d(TAG, "✅ Impression RAW envoyée (" + data.length + " bytes)");
 
         } catch (RemoteException e) {
             Log.e(TAG, "Erreur impression: " + e.getMessage());
@@ -178,7 +229,7 @@ public class MainActivity extends Activity {
                 ? e.getMessage().replace("'", "")
                 : "Erè enkoni";
             runOnUiThread(() ->
-                webView.evaluateJavascript("alert('Erè: " + msg + "');", null)
+                webView.evaluateJavascript("alert('Ere: " + msg + "');", null)
             );
         }
     }
