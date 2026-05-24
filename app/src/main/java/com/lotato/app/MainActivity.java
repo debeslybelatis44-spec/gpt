@@ -42,7 +42,7 @@ public class MainActivity extends Activity {
         public void onServiceConnected(ComponentName name, IBinder service) {
             woyouService = IWoyouService.Stub.asInterface(service);
             printerConnected = true;
-            addLog("✅ CONNECTE: " + name.flattenToString());
+            addLog("✅ CONNECTE");
             if (pendingPrintHTML != null) {
                 final String html = pendingPrintHTML;
                 pendingPrintHTML = null;
@@ -54,7 +54,7 @@ public class MainActivity extends Activity {
         public void onServiceDisconnected(ComponentName name) {
             woyouService = null;
             printerConnected = false;
-            addLog("❌ DECONNECTE");
+            addLog("❌ DECONNECTE - reconnexion...");
             handler.postDelayed(() -> bindSunmiPrinter(), 2000);
         }
     };
@@ -67,8 +67,7 @@ public class MainActivity extends Activity {
         webView = new WebView(this);
         root.addView(webView, new FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
-            FrameLayout.LayoutParams.MATCH_PARENT
-        ));
+            FrameLayout.LayoutParams.MATCH_PARENT));
 
         logScroll = new ScrollView(this);
         logScroll.setBackgroundColor(0xDD000000);
@@ -132,7 +131,7 @@ public class MainActivity extends Activity {
     }
 
     private void bindSunmiPrinter() {
-        addLog("--- Liaison Sunmi ---");
+        addLog("--- Liaison ---");
         try {
             Intent i = new Intent("woyou.aidlservice.jiuiv5.IWoyouService");
             i.setPackage("woyou.aidlservice.jiuiv5");
@@ -202,7 +201,7 @@ public class MainActivity extends Activity {
     }
 
     private void printWithSunmi(final String html) {
-        addLog("--- Debut impression ---");
+        addLog("--- Impression ---");
         new Thread(() -> {
             try {
                 String text = html
@@ -218,33 +217,21 @@ public class MainActivity extends Activity {
                 text = cleanText(text);
 
                 woyouService.printerInit(null);
-                addLog("printerInit OK");
+                addLog("Init OK");
 
-                // Imprimer toutes les lignes
                 for (String line : text.split("\n")) {
                     line = line.trim();
                     if (line.isEmpty()) continue;
                     if (line.matches("[-=]{3,}")) line = "--------------------------------";
                     woyouService.printText(line + "\n", null);
                 }
-                addLog("Lignes imprimees");
 
-                // ✅ Avancer le papier d'abord
-                woyouService.lineWrap(5, null);
-                addLog("lineWrap OK");
-
-                // ✅ Attendre 1 seconde puis couper
-                Thread.sleep(1000);
-                addLog("cutPaper apres delai...");
-                woyouService.cutPaper(null);
-                addLog("✅ IMPRESSION + COUPE TERMINEE");
+                // ✅ Avancer 8 lignes — PAS cutPaper
+                woyouService.lineWrap(8, null);
+                addLog("✅ TERMINE - papier sorti");
 
             } catch (Exception e) {
-                addLog("❌ ERREUR: " + e.getClass().getSimpleName() + " - " + e.getMessage());
-                runOnUiThread(() ->
-                    webView.evaluateJavascript(
-                        "alert('Ere: " + e.getClass().getSimpleName() + "');", null)
-                );
+                addLog("❌ " + e.getClass().getSimpleName() + ": " + e.getMessage());
             }
         }).start();
     }
