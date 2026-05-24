@@ -1,6 +1,7 @@
 package com.lotato.app;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -14,6 +15,12 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.util.Log;
+import android.view.Gravity;
+import android.view.View;
+import android.widget.FrameLayout;
+import android.widget.ScrollView;
+import android.widget.TextView;
+import android.widget.Button;
 
 import woyou.aidlservice.jiuiv5.IWoyouService;
 
@@ -24,13 +31,17 @@ public class MainActivity extends Activity {
     private IWoyouService woyouService;
     private boolean printerConnected = false;
     private String pendingPrintHTML = null;
+    private StringBuilder logBuffer = new StringBuilder();
+    private TextView logView;
+    private ScrollView logScroll;
+    private boolean logVisible = false;
 
     private ServiceConnection serviceConnection = new ServiceConnection() {
         @Override
         public void onServiceConnected(ComponentName name, IBinder service) {
             woyouService = IWoyouService.Stub.asInterface(service);
             printerConnected = true;
-            Log.d(TAG, "✅ Sunmi connecté: " + name.flattenToString());
+            addLog("✅ CONNECTE: " + name.flattenToString());
             if (pendingPrintHTML != null) {
                 final String html = pendingPrintHTML;
                 pendingPrintHTML = null;
@@ -42,16 +53,62 @@ public class MainActivity extends Activity {
         public void onServiceDisconnected(ComponentName name) {
             woyouService = null;
             printerConnected = false;
+            addLog("❌ DECONNECTE: " + name.flattenToString());
         }
     };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        bindSunmiPrinter();
 
+        // Layout principal avec WebView + bouton debug
+        FrameLayout root = new FrameLayout(this);
+
+        // WebView
         webView = new WebView(this);
-        setContentView(webView);
+        root.addView(webView, new FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        ));
+
+        // Panel de logs (caché par défaut)
+        logScroll = new ScrollView(this);
+        logScroll.setBackgroundColor(0xDD000000);
+        logView = new TextView(this);
+        logView.setTextColor(0xFF00FF00);
+        logView.setTextSize(10);
+        logView.setPadding(10, 10, 10, 10);
+        logView.setTypeface(android.graphics.Typeface.MONOSPACE);
+        logScroll.addView(logView);
+        FrameLayout.LayoutParams logParams = new FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, 400
+        );
+        logParams.gravity = Gravity.BOTTOM;
+        logParams.bottomMargin = 60;
+        logScroll.setVisibility(View.GONE);
+        root.addView(logScroll, logParams);
+
+        // Bouton DEBUG en bas à droite
+        Button debugBtn = new Button(this);
+        debugBtn.setText("LOG");
+        debugBtn.setTextSize(9);
+        debugBtn.setBackgroundColor(0xAA333333);
+        debugBtn.setTextColor(0xFFFFFF00);
+        FrameLayout.LayoutParams btnParams = new FrameLayout.LayoutParams(120, 60);
+        btnParams.gravity = Gravity.BOTTOM | Gravity.END;
+        btnParams.bottomMargin = 0;
+        btnParams.rightMargin = 0;
+        root.addView(debugBtn, btnParams);
+
+        debugBtn.setOnClickListener(v -> {
+            logVisible = !logVisible;
+            logScroll.setVisibility(logVisible ? View.VISIBLE : View.GONE);
+            if (logVisible) {
+                logScroll.post(() -> logScroll.fullScroll(View.FOCUS_DOWN));
+            }
+        });
+
+        setContentView(root);
 
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -67,9 +124,25 @@ public class MainActivity extends Activity {
         webView.setWebViewClient(new WebViewClient());
         webView.setWebChromeClient(new WebChromeClient());
         webView.loadUrl("https://lotato1.onrender.com/agent1.html");
+
+        addLog("App démarré - liaison Sunmi...");
+        bindSunmiPrinter();
+    }
+
+    private void addLog(String msg) {
+        Log.d(TAG, msg);
+        runOnUiThread(() -> {
+            logBuffer.append(msg).append("\n");
+            if (logView != null) {
+                logView.setText(logBuffer.toString());
+                logScroll.post(() -> logScroll.fullScroll(View.FOCUS_DOWN));
+            }
+        });
     }
 
     private void bindSunmiPrinter() {
+        addLog("--- Tentative liaison ---");
+
         try {
             Intent i = new Intent();
             i.setComponent(new ComponentName(
@@ -77,17 +150,17 @@ public class MainActivity extends Activity {
                 "woyou.aidlservice.jiuiv5.InnerPrinterService"
             ));
             boolean b = bindService(i, serviceConnection, Context.BIND_AUTO_CREATE);
-            Log.d(TAG, "Bind M1: " + b);
+            addLog("M1 InnerPrinterService: " + b);
             if (b) return;
-        } catch (Exception e) { Log.e(TAG, "M1: " + e.getMessage()); }
+        } catch (Exception e) { addLog("M1 ERR: " + e.getMessage()); }
 
         try {
             Intent i = new Intent("woyou.aidlservice.jiuiv5.IWoyouService");
             i.setPackage("woyou.aidlservice.jiuiv5");
             boolean b = bindService(i, serviceConnection, Context.BIND_AUTO_CREATE);
-            Log.d(TAG, "Bind M2: " + b);
+            addLog("M2 Action+Package: " + b);
             if (b) return;
-        } catch (Exception e) { Log.e(TAG, "M2: " + e.getMessage()); }
+        } catch (Exception e) { addLog("M2 ERR: " + e.getMessage()); }
 
         try {
             Intent i = new Intent();
@@ -96,14 +169,22 @@ public class MainActivity extends Activity {
                 "com.sunmi.innerprinter.InnerPrinterService"
             ));
             boolean b = bindService(i, serviceConnection, Context.BIND_AUTO_CREATE);
-            Log.d(TAG, "Bind M3: " + b);
-        } catch (Exception e) { Log.e(TAG, "M3: " + e.getMessage()); }
+            addLog("M3 sunmi.innerprinter: " + b);
+            if (b) return;
+        } catch (Exception e) { addLog("M3 ERR: " + e.getMessage()); }
+
+        try {
+            Intent i = new Intent("com.sunmi.innerprinter.ISunmiPrinterService");
+            i.setPackage("com.sunmi.innerprinter");
+            boolean b = bindService(i, serviceConnection, Context.BIND_AUTO_CREATE);
+            addLog("M4 innerprinter action: " + b);
+        } catch (Exception e) { addLog("M4 ERR: " + e.getMessage()); }
     }
 
     public class SunmiBridge {
         @JavascriptInterface
         public void printHTML(final String html) {
-            Log.d(TAG, "printHTML - connecté=" + printerConnected);
+            addLog("printHTML appelé len=" + html.length() + " connecté=" + printerConnected);
             runOnUiThread(() -> {
                 if (printerConnected && woyouService != null) {
                     printWithSunmi(html);
@@ -119,7 +200,7 @@ public class MainActivity extends Activity {
                             } else {
                                 pendingPrintHTML = null;
                                 webView.evaluateJavascript(
-                                    "alert('Sèvis Sunmi pa jwenn.');", null);
+                                    "alert('Sunmi pa jwenn.');", null);
                             }
                         }
                     }, 4000);
@@ -133,96 +214,81 @@ public class MainActivity extends Activity {
         }
     }
 
-    // ✅ Nettoyer TOUS les caractères non-ASCII avant printText
-    private String cleanForPrinter(String input) {
+    private String cleanText(String input) {
         if (input == null) return "";
         return input
-            // Créole / Français
-            .replace("\u00e8","e").replace("\u00e9","e").replace("\u00ea","e").replace("\u00eb","e")
-            .replace("\u00e0","a").replace("\u00e2","a").replace("\u00e4","a")
-            .replace("\u00f2","o").replace("\u00f4","o").replace("\u00f6","o")
-            .replace("\u00f9","u").replace("\u00fb","u").replace("\u00fc","u")
+            .replace("\u00e8","e").replace("\u00e9","e").replace("\u00ea","e")
+            .replace("\u00e0","a").replace("\u00e2","a")
+            .replace("\u00f2","o").replace("\u00f4","o")
+            .replace("\u00f9","u").replace("\u00fb","u")
             .replace("\u00ee","i").replace("\u00ef","i")
             .replace("\u00e7","c")
-            .replace("\u00c8","E").replace("\u00c9","E").replace("\u00ca","E")
+            .replace("\u00c8","E").replace("\u00c9","E")
             .replace("\u00c0","A").replace("\u00c2","A")
-            .replace("\u00d2","O").replace("\u00d4","O")
-            .replace("\u00d9","U").replace("\u00db","U")
-            .replace("\u00ce","I")
-            .replace("\u00c7","C")
-            // Guillemets et apostrophes
             .replace("\u2019","'").replace("\u2018","'")
             .replace("\u201c","\"").replace("\u201d","\"")
             .replace("\u00ab","\"").replace("\u00bb","\"")
-            // Tirets spéciaux
             .replace("\u2013","-").replace("\u2014","-")
-            // Supprimer tout caractère restant > 127
-            .replaceAll("[^\\x00-\\x7F]", "?");
+            .replaceAll("[^\\x00-\\x7F]","?");
     }
 
     private void printWithSunmi(String html) {
+        addLog("--- Debut impression ---");
         try {
-            // Nettoyer HTML → texte pur
             String text = html
-                .replaceAll("(?s)<style[^>]*>.*?</style>", "")
-                .replaceAll("<br\\s*/?>", "\n")
-                .replaceAll("</div>", "\n")
-                .replaceAll("</p>", "\n")
-                .replaceAll("<[^>]+>", "")
-                .replaceAll("&nbsp;", " ")
-                .replaceAll("&amp;", "&")
-                .replaceAll("&lt;", "<")
-                .replaceAll("&gt;", ">")
-                .replaceAll("\n{3,}", "\n\n")
+                .replaceAll("(?s)<style[^>]*>.*?</style>","")
+                .replaceAll("<br\\s*/?>","\n")
+                .replaceAll("</div>","\n")
+                .replaceAll("</p>","\n")
+                .replaceAll("<[^>]+>","")
+                .replaceAll("&nbsp;"," ")
+                .replaceAll("&amp;","&")
+                .replaceAll("\n{3,}","\n\n")
                 .trim();
 
-            // ✅ Nettoyer TOUS les accents AVANT d'envoyer à printText
-            text = cleanForPrinter(text);
+            text = cleanText(text);
+            addLog("Texte nettoyé: " + text.length() + " chars");
+            addLog("Début texte: " + text.substring(0, Math.min(50, text.length())));
 
-            // Init imprimante
+            addLog("printerInit...");
             woyouService.printerInit(null);
+            addLog("printerInit OK");
 
-            // Imprimer ligne par ligne avec try/catch individuel
-            for (String line : text.split("\n")) {
-                line = line.trim();
+            String[] lines = text.split("\n");
+            addLog("Lignes: " + lines.length);
+
+            for (int i = 0; i < lines.length; i++) {
+                String line = lines[i].trim();
                 if (line.isEmpty()) continue;
+                if (line.matches("[-=]{3,}")) line = "--------------------------------";
 
-                if (line.matches("[-=]{3,}")) {
-                    line = "--------------------------------";
-                }
-
+                addLog("Ligne " + i + ": [" + line + "]");
                 try {
                     woyouService.printText(line + "\n", null);
+                    addLog("Ligne " + i + " OK");
                 } catch (RemoteException re) {
-                    Log.e(TAG, "Erreur ligne [" + line + "]: " + re.getMessage());
-                    // Continuer malgré l'erreur sur une ligne
+                    addLog("Ligne " + i + " ERR: " + re.getMessage());
                 }
             }
 
-            // Avancer et couper
+            addLog("lineWrap...");
             woyouService.lineWrap(4, null);
+            addLog("cutPaper...");
             woyouService.cutPaper(null);
-
-            Log.d(TAG, "✅ Impression terminee");
+            addLog("✅ IMPRESSION TERMINEE");
 
         } catch (Exception e) {
-            Log.e(TAG, "Erreur globale: " + e.getMessage());
-            final String msg = e.getMessage() != null
-                ? e.getMessage().replace("'","")
-                : "unknown";
+            addLog("❌ ERREUR GLOBALE: " + e.getClass().getName() + " - " + e.getMessage());
             runOnUiThread(() ->
-                webView.evaluateJavascript("alert('Ere impression: " + msg + "');", null)
+                webView.evaluateJavascript("alert('Ere: " + e.getMessage() + "');", null)
             );
         }
     }
 
     @Override
     public void onBackPressed() {
-        if (webView.canGoBack()) {
-            webView.goBack();
-        } else {
-            super.onBackPressed();
-        }
+        if (webView.canGoBack()) webView.goBack();
+        else super.onBackPressed();
     }
 
     @Override
