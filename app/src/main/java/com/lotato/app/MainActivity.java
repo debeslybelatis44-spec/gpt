@@ -133,9 +133,36 @@ public class MainActivity extends Activity {
         }
     }
 
+    // ✅ Nettoyer TOUS les caractères non-ASCII avant printText
+    private String cleanForPrinter(String input) {
+        if (input == null) return "";
+        return input
+            // Créole / Français
+            .replace("\u00e8","e").replace("\u00e9","e").replace("\u00ea","e").replace("\u00eb","e")
+            .replace("\u00e0","a").replace("\u00e2","a").replace("\u00e4","a")
+            .replace("\u00f2","o").replace("\u00f4","o").replace("\u00f6","o")
+            .replace("\u00f9","u").replace("\u00fb","u").replace("\u00fc","u")
+            .replace("\u00ee","i").replace("\u00ef","i")
+            .replace("\u00e7","c")
+            .replace("\u00c8","E").replace("\u00c9","E").replace("\u00ca","E")
+            .replace("\u00c0","A").replace("\u00c2","A")
+            .replace("\u00d2","O").replace("\u00d4","O")
+            .replace("\u00d9","U").replace("\u00db","U")
+            .replace("\u00ce","I")
+            .replace("\u00c7","C")
+            // Guillemets et apostrophes
+            .replace("\u2019","'").replace("\u2018","'")
+            .replace("\u201c","\"").replace("\u201d","\"")
+            .replace("\u00ab","\"").replace("\u00bb","\"")
+            // Tirets spéciaux
+            .replace("\u2013","-").replace("\u2014","-")
+            // Supprimer tout caractère restant > 127
+            .replaceAll("[^\\x00-\\x7F]", "?");
+    }
+
     private void printWithSunmi(String html) {
         try {
-            // Nettoyer HTML
+            // Nettoyer HTML → texte pur
             String text = html
                 .replaceAll("(?s)<style[^>]*>.*?</style>", "")
                 .replaceAll("<br\\s*/?>", "\n")
@@ -149,57 +176,42 @@ public class MainActivity extends Activity {
                 .replaceAll("\n{3,}", "\n\n")
                 .trim();
 
-            // Remplacer accents
-            text = text
-                .replace("\u00e8","e").replace("\u00e9","e").replace("\u00ea","e")
-                .replace("\u00e0","a").replace("\u00e2","a")
-                .replace("\u00f2","o").replace("\u00f4","o")
-                .replace("\u00f9","u").replace("\u00fb","u")
-                .replace("\u00ee","i").replace("\u00ef","i")
-                .replace("\u00e7","c")
-                .replace("\u00c8","E").replace("\u00c9","E")
-                .replace("\u00c0","A").replace("\u00c2","A")
-                .replace("\u2019","'").replace("\u2018","'")
-                .replace("\u00ab","\"").replace("\u00bb","\"");
+            // ✅ Nettoyer TOUS les accents AVANT d'envoyer à printText
+            text = cleanForPrinter(text);
 
-            // ✅ Construire ESC/POS sans printerInit
-            StringBuilder sb = new StringBuilder();
+            // Init imprimante
+            woyouService.printerInit(null);
 
-            // ESC @ reset
-            sb.append((char)0x1B).append((char)0x40);
-
-            // Chaque ligne
+            // Imprimer ligne par ligne avec try/catch individuel
             for (String line : text.split("\n")) {
                 line = line.trim();
-                if (line.isEmpty()) {
-                    sb.append("\n");
-                } else if (line.matches("[-=]{3,}")) {
-                    sb.append("--------------------------------\n");
-                } else {
-                    sb.append(line).append("\n");
+                if (line.isEmpty()) continue;
+
+                if (line.matches("[-=]{3,}")) {
+                    line = "--------------------------------";
+                }
+
+                try {
+                    woyouService.printText(line + "\n", null);
+                } catch (RemoteException re) {
+                    Log.e(TAG, "Erreur ligne [" + line + "]: " + re.getMessage());
+                    // Continuer malgré l'erreur sur une ligne
                 }
             }
 
-            // Feed 4 lignes : ESC d 4
-            sb.append((char)0x1B).append((char)0x64).append((char)0x04);
+            // Avancer et couper
+            woyouService.lineWrap(4, null);
+            woyouService.cutPaper(null);
 
-            // Coupe partielle : GS V 1
-            sb.append((char)0x1D).append((char)0x56).append((char)0x01);
-
-            byte[] data = sb.toString().getBytes("ISO-8859-1");
-
-            // ✅ sendRAWData sans printerInit avant
-            woyouService.sendRAWData(data, null);
-
-            Log.d(TAG, "✅ RAW envoyé: " + data.length + " bytes");
+            Log.d(TAG, "✅ Impression terminee");
 
         } catch (Exception e) {
-            Log.e(TAG, "Erreur: " + e.getMessage());
+            Log.e(TAG, "Erreur globale: " + e.getMessage());
             final String msg = e.getMessage() != null
                 ? e.getMessage().replace("'","")
                 : "unknown";
             runOnUiThread(() ->
-                webView.evaluateJavascript("alert('Ere: " + msg + "');", null)
+                webView.evaluateJavascript("alert('Ere impression: " + msg + "');", null)
             );
         }
     }
