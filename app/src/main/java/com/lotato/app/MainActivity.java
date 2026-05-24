@@ -43,7 +43,7 @@ public class MainActivity extends Activity {
         public void onServiceConnected(ComponentName name, IBinder service) {
             woyouService = IWoyouService.Stub.asInterface(service);
             printerConnected = true;
-            addLog("✅ CONNECTE");
+            addLog("✅ CONNECTE: " + name.flattenToString());
             if (pendingPrintHTML != null) {
                 final String html = pendingPrintHTML;
                 pendingPrintHTML = null;
@@ -111,7 +111,7 @@ public class MainActivity extends Activity {
         settings.setDatabaseEnabled(true);
         settings.setAllowFileAccess(true);
 
-        webView.addJavascriptInterface(new SunmiBridge(), "AndroidPrint");
+        webView.addJavascriptInterface(new PrintBridge(), "AndroidPrint");
         webView.setWebViewClient(new WebViewClient());
         webView.setWebChromeClient(new WebChromeClient());
         webView.loadUrl("https://lotato1.onrender.com/agent1.html");
@@ -133,25 +133,41 @@ public class MainActivity extends Activity {
 
     private void bindSunmiPrinter() {
         addLog("--- Liaison ---");
+
+        // ✅ M1 - com.sunmi.printservice (Print Service Version 6.1.24)
+        try {
+            Intent i = new Intent();
+            i.setComponent(new ComponentName(
+                "com.sunmi.printservice",
+                "com.sunmi.printservice.PrintService"
+            ));
+            boolean b = bindService(i, serviceConnection, Context.BIND_AUTO_CREATE);
+            addLog("M1 printservice: " + b);
+            if (b) return;
+        } catch (Exception e) { addLog("M1 ERR: " + e.getMessage()); }
+
+        // ✅ M2 - woyou (fallback)
         try {
             Intent i = new Intent("woyou.aidlservice.jiuiv5.IWoyouService");
             i.setPackage("woyou.aidlservice.jiuiv5");
             boolean b = bindService(i, serviceConnection, Context.BIND_AUTO_CREATE);
-            addLog("M2: " + b);
+            addLog("M2 woyou: " + b);
             if (b) return;
         } catch (Exception e) { addLog("M2 ERR: " + e.getMessage()); }
 
+        // ✅ M3 - sunmi.innerprinter
         try {
             Intent i = new Intent();
             i.setComponent(new ComponentName(
-                "woyou.aidlservice.jiuiv5",
-                "woyou.aidlservice.jiuiv5.InnerPrinterService"));
+                "com.sunmi.innerprinter",
+                "com.sunmi.innerprinter.InnerPrinterService"
+            ));
             boolean b = bindService(i, serviceConnection, Context.BIND_AUTO_CREATE);
-            addLog("M1: " + b);
-        } catch (Exception e) { addLog("M1 ERR: " + e.getMessage()); }
+            addLog("M3 innerprinter: " + b);
+        } catch (Exception e) { addLog("M3 ERR: " + e.getMessage()); }
     }
 
-    public class SunmiBridge {
+    public class PrintBridge {
         @JavascriptInterface
         public void printHTML(final String html) {
             addLog("printHTML len=" + html.length());
@@ -169,7 +185,7 @@ public class MainActivity extends Activity {
                                 printWithSunmi(h);
                             } else {
                                 pendingPrintHTML = null;
-                                webView.evaluateJavascript("alert('Sunmi pa jwenn.');", null);
+                                webView.evaluateJavascript("alert('Imprimante pa disponib.');", null);
                             }
                         }
                     }, 4000);
@@ -217,52 +233,20 @@ public class MainActivity extends Activity {
                     .trim();
                 text = cleanText(text);
 
-                ByteArrayOutputStream bos = new ByteArrayOutputStream();
-
-                // ESC @ reset
-                bos.write(new byte[]{0x1B, 0x40});
+                woyouService.printerInit(null);
+                addLog("Init OK");
+                Thread.sleep(200);
 
                 for (String line : text.split("\n")) {
                     line = line.trim();
-                    if (line.isEmpty()) {
-                        bos.write('\n');
-                        continue;
-                    }
+                    if (line.isEmpty()) continue;
                     if (line.matches("[-=]{3,}")) line = "--------------------------------";
-                    bos.write(line.getBytes("ASCII"));
-                    bos.write('\n');
+                    woyouService.printText(line + "\n", null);
+                    Thread.sleep(30);
                 }
 
-                // Feed 8 lignes
-                bos.write(new byte[]{0x1B, 0x64, 0x08});
-
-                byte[] data = bos.toByteArray();
-                addLog("Bytes: " + data.length);
-
-                // ✅ Essayer printRawData d'abord
-                try {
-                    woyouService.printRawData(data, null);
-                    addLog("✅ printRawData OK");
-                } catch (Exception e1) {
-                    addLog("printRawData ERR: " + e1.getMessage());
-                    // Fallback: sendRAWData
-                    try {
-                        woyouService.sendRAWData(data, null);
-                        addLog("✅ sendRAWData OK");
-                    } catch (Exception e2) {
-                        addLog("sendRAWData ERR: " + e2.getMessage());
-                        // Dernier fallback: printText ligne par ligne
-                        woyouService.printerInit(null);
-                        for (String line : text.split("\n")) {
-                            line = line.trim();
-                            if (!line.isEmpty()) {
-                                woyouService.printText(line + "\n", null);
-                            }
-                        }
-                        woyouService.lineWrap(8, null);
-                        addLog("✅ printText fallback OK");
-                    }
-                }
+                woyouService.lineWrap(6, null);
+                addLog("✅ IMPRESSION TERMINEE");
 
             } catch (Exception e) {
                 addLog("❌ " + e.getClass().getSimpleName() + ": " + e.getMessage());
