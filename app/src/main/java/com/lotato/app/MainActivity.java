@@ -1,7 +1,6 @@
 package com.lotato.app;
 
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -54,6 +53,8 @@ public class MainActivity extends Activity {
             woyouService = null;
             printerConnected = false;
             addLog("❌ DECONNECTE: " + name.flattenToString());
+            // Reconnecter automatiquement
+            runOnUiThread(() -> bindSunmiPrinter());
         }
     };
 
@@ -61,17 +62,14 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Layout principal avec WebView + bouton debug
         FrameLayout root = new FrameLayout(this);
 
-        // WebView
         webView = new WebView(this);
         root.addView(webView, new FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
             FrameLayout.LayoutParams.MATCH_PARENT
         ));
 
-        // Panel de logs (caché par défaut)
         logScroll = new ScrollView(this);
         logScroll.setBackgroundColor(0xDD000000);
         logView = new TextView(this);
@@ -88,7 +86,6 @@ public class MainActivity extends Activity {
         logScroll.setVisibility(View.GONE);
         root.addView(logScroll, logParams);
 
-        // Bouton DEBUG en bas à droite
         Button debugBtn = new Button(this);
         debugBtn.setText("LOG");
         debugBtn.setTextSize(9);
@@ -96,16 +93,12 @@ public class MainActivity extends Activity {
         debugBtn.setTextColor(0xFFFFFF00);
         FrameLayout.LayoutParams btnParams = new FrameLayout.LayoutParams(120, 60);
         btnParams.gravity = Gravity.BOTTOM | Gravity.END;
-        btnParams.bottomMargin = 0;
-        btnParams.rightMargin = 0;
         root.addView(debugBtn, btnParams);
 
         debugBtn.setOnClickListener(v -> {
             logVisible = !logVisible;
             logScroll.setVisibility(logVisible ? View.VISIBLE : View.GONE);
-            if (logVisible) {
-                logScroll.post(() -> logScroll.fullScroll(View.FOCUS_DOWN));
-            }
+            if (logVisible) logScroll.post(() -> logScroll.fullScroll(View.FOCUS_DOWN));
         });
 
         setContentView(root);
@@ -125,7 +118,7 @@ public class MainActivity extends Activity {
         webView.setWebChromeClient(new WebChromeClient());
         webView.loadUrl("https://lotato1.onrender.com/agent1.html");
 
-        addLog("App démarré - liaison Sunmi...");
+        addLog("App demarré - liaison Sunmi...");
         bindSunmiPrinter();
     }
 
@@ -141,19 +134,7 @@ public class MainActivity extends Activity {
     }
 
     private void bindSunmiPrinter() {
-        addLog("--- Tentative liaison ---");
-
-        try {
-            Intent i = new Intent();
-            i.setComponent(new ComponentName(
-                "woyou.aidlservice.jiuiv5",
-                "woyou.aidlservice.jiuiv5.InnerPrinterService"
-            ));
-            boolean b = bindService(i, serviceConnection, Context.BIND_AUTO_CREATE);
-            addLog("M1 InnerPrinterService: " + b);
-            if (b) return;
-        } catch (Exception e) { addLog("M1 ERR: " + e.getMessage()); }
-
+        addLog("--- Liaison Sunmi ---");
         try {
             Intent i = new Intent("woyou.aidlservice.jiuiv5.IWoyouService");
             i.setPackage("woyou.aidlservice.jiuiv5");
@@ -165,26 +146,18 @@ public class MainActivity extends Activity {
         try {
             Intent i = new Intent();
             i.setComponent(new ComponentName(
-                "com.sunmi.innerprinter",
-                "com.sunmi.innerprinter.InnerPrinterService"
+                "woyou.aidlservice.jiuiv5",
+                "woyou.aidlservice.jiuiv5.InnerPrinterService"
             ));
             boolean b = bindService(i, serviceConnection, Context.BIND_AUTO_CREATE);
-            addLog("M3 sunmi.innerprinter: " + b);
-            if (b) return;
-        } catch (Exception e) { addLog("M3 ERR: " + e.getMessage()); }
-
-        try {
-            Intent i = new Intent("com.sunmi.innerprinter.ISunmiPrinterService");
-            i.setPackage("com.sunmi.innerprinter");
-            boolean b = bindService(i, serviceConnection, Context.BIND_AUTO_CREATE);
-            addLog("M4 innerprinter action: " + b);
-        } catch (Exception e) { addLog("M4 ERR: " + e.getMessage()); }
+            addLog("M1 ComponentName: " + b);
+        } catch (Exception e) { addLog("M1 ERR: " + e.getMessage()); }
     }
 
     public class SunmiBridge {
         @JavascriptInterface
         public void printHTML(final String html) {
-            addLog("printHTML appelé len=" + html.length() + " connecté=" + printerConnected);
+            addLog("printHTML len=" + html.length() + " connecte=" + printerConnected);
             runOnUiThread(() -> {
                 if (printerConnected && woyouService != null) {
                     printWithSunmi(html);
@@ -199,8 +172,7 @@ public class MainActivity extends Activity {
                                 printWithSunmi(h);
                             } else {
                                 pendingPrintHTML = null;
-                                webView.evaluateJavascript(
-                                    "alert('Sunmi pa jwenn.');", null);
+                                webView.evaluateJavascript("alert('Sunmi pa jwenn.');", null);
                             }
                         }
                     }, 4000);
@@ -247,40 +219,29 @@ public class MainActivity extends Activity {
                 .trim();
 
             text = cleanText(text);
-            addLog("Texte nettoyé: " + text.length() + " chars");
-            addLog("Début texte: " + text.substring(0, Math.min(50, text.length())));
 
-            addLog("printerInit...");
             woyouService.printerInit(null);
             addLog("printerInit OK");
 
-            String[] lines = text.split("\n");
-            addLog("Lignes: " + lines.length);
-
-            for (int i = 0; i < lines.length; i++) {
-                String line = lines[i].trim();
+            for (String line : text.split("\n")) {
+                line = line.trim();
                 if (line.isEmpty()) continue;
                 if (line.matches("[-=]{3,}")) line = "--------------------------------";
-
-                addLog("Ligne " + i + ": [" + line + "]");
                 try {
                     woyouService.printText(line + "\n", null);
-                    addLog("Ligne " + i + " OK");
                 } catch (RemoteException re) {
-                    addLog("Ligne " + i + " ERR: " + re.getMessage());
+                    addLog("Ligne ERR: " + re.getMessage());
                 }
             }
 
-            addLog("lineWrap...");
-            woyouService.lineWrap(4, null);
-            addLog("cutPaper...");
-            woyouService.cutPaper(null);
+            // ✅ lineWrap seulement — PAS cutPaper qui crashait le service
+            woyouService.lineWrap(5, null);
             addLog("✅ IMPRESSION TERMINEE");
 
         } catch (Exception e) {
-            addLog("❌ ERREUR GLOBALE: " + e.getClass().getName() + " - " + e.getMessage());
+            addLog("❌ ERREUR: " + e.getClass().getSimpleName() + " - " + e.getMessage());
             runOnUiThread(() ->
-                webView.evaluateJavascript("alert('Ere: " + e.getMessage() + "');", null)
+                webView.evaluateJavascript("alert('Ere: " + e.getClass().getSimpleName() + "');", null)
             );
         }
     }
