@@ -8,7 +8,6 @@ import android.content.ServiceConnection;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.Handler;
-import android.os.RemoteException;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
@@ -23,6 +22,8 @@ import android.widget.TextView;
 import android.widget.Button;
 
 import woyou.aidlservice.jiuiv5.IWoyouService;
+
+import java.io.ByteArrayOutputStream;
 
 public class MainActivity extends Activity {
 
@@ -201,7 +202,7 @@ public class MainActivity extends Activity {
     }
 
     private void printWithSunmi(final String html) {
-        addLog("--- Impression ---");
+        addLog("--- Impression RAW ---");
         new Thread(() -> {
             try {
                 String text = html
@@ -216,19 +217,35 @@ public class MainActivity extends Activity {
                     .trim();
                 text = cleanText(text);
 
-                woyouService.printerInit(null);
-                addLog("Init OK");
+                // ✅ Construire ESC/POS complet en un seul bloc
+                ByteArrayOutputStream bos = new ByteArrayOutputStream();
 
+                // ESC @ - reset complet
+                bos.write(new byte[]{0x1B, 0x40});
+
+                // Imprimer chaque ligne
                 for (String line : text.split("\n")) {
                     line = line.trim();
-                    if (line.isEmpty()) continue;
-                    if (line.matches("[-=]{3,}")) line = "--------------------------------";
-                    woyouService.printText(line + "\n", null);
+                    if (line.isEmpty()) {
+                        bos.write('\n');
+                        continue;
+                    }
+                    if (line.matches("[-=]{3,}")) {
+                        line = "--------------------------------";
+                    }
+                    bos.write(line.getBytes("ASCII"));
+                    bos.write('\n');
                 }
 
-                // ✅ Avancer 8 lignes — PAS cutPaper
-                woyouService.lineWrap(8, null);
-                addLog("✅ TERMINE - papier sorti");
+                // Feed papier - ESC d 8
+                bos.write(new byte[]{0x1B, 0x64, 0x08});
+
+                byte[] data = bos.toByteArray();
+                addLog("RAW bytes: " + data.length);
+
+                // ✅ sendRAWData - un seul appel avec tout le ticket
+                woyouService.sendRAWData(data, null);
+                addLog("✅ sendRAWData OK");
 
             } catch (Exception e) {
                 addLog("❌ " + e.getClass().getSimpleName() + ": " + e.getMessage());
