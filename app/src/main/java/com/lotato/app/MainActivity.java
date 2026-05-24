@@ -7,6 +7,7 @@ import android.content.Intent;
 import android.content.ServiceConnection;
 import android.os.Bundle;
 import android.os.IBinder;
+import android.os.Handler;
 import android.os.RemoteException;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
@@ -34,6 +35,7 @@ public class MainActivity extends Activity {
     private TextView logView;
     private ScrollView logScroll;
     private boolean logVisible = false;
+    private Handler handler = new Handler();
 
     private ServiceConnection serviceConnection = new ServiceConnection() {
         @Override
@@ -52,9 +54,8 @@ public class MainActivity extends Activity {
         public void onServiceDisconnected(ComponentName name) {
             woyouService = null;
             printerConnected = false;
-            addLog("❌ DECONNECTE: " + name.flattenToString());
-            // Reconnecter automatiquement
-            runOnUiThread(() -> bindSunmiPrinter());
+            addLog("❌ DECONNECTE");
+            handler.postDelayed(() -> bindSunmiPrinter(), 2000);
         }
     };
 
@@ -63,7 +64,6 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
 
         FrameLayout root = new FrameLayout(this);
-
         webView = new WebView(this);
         root.addView(webView, new FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
@@ -79,8 +79,7 @@ public class MainActivity extends Activity {
         logView.setTypeface(android.graphics.Typeface.MONOSPACE);
         logScroll.addView(logView);
         FrameLayout.LayoutParams logParams = new FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT, 400
-        );
+            FrameLayout.LayoutParams.MATCH_PARENT, 400);
         logParams.gravity = Gravity.BOTTOM;
         logParams.bottomMargin = 60;
         logScroll.setVisibility(View.GONE);
@@ -94,7 +93,6 @@ public class MainActivity extends Activity {
         FrameLayout.LayoutParams btnParams = new FrameLayout.LayoutParams(120, 60);
         btnParams.gravity = Gravity.BOTTOM | Gravity.END;
         root.addView(debugBtn, btnParams);
-
         debugBtn.setOnClickListener(v -> {
             logVisible = !logVisible;
             logScroll.setVisibility(logVisible ? View.VISIBLE : View.GONE);
@@ -118,7 +116,7 @@ public class MainActivity extends Activity {
         webView.setWebChromeClient(new WebChromeClient());
         webView.loadUrl("https://lotato1.onrender.com/agent1.html");
 
-        addLog("App demarré - liaison Sunmi...");
+        addLog("App demarre");
         bindSunmiPrinter();
     }
 
@@ -139,7 +137,7 @@ public class MainActivity extends Activity {
             Intent i = new Intent("woyou.aidlservice.jiuiv5.IWoyouService");
             i.setPackage("woyou.aidlservice.jiuiv5");
             boolean b = bindService(i, serviceConnection, Context.BIND_AUTO_CREATE);
-            addLog("M2 Action+Package: " + b);
+            addLog("M2: " + b);
             if (b) return;
         } catch (Exception e) { addLog("M2 ERR: " + e.getMessage()); }
 
@@ -147,24 +145,23 @@ public class MainActivity extends Activity {
             Intent i = new Intent();
             i.setComponent(new ComponentName(
                 "woyou.aidlservice.jiuiv5",
-                "woyou.aidlservice.jiuiv5.InnerPrinterService"
-            ));
+                "woyou.aidlservice.jiuiv5.InnerPrinterService"));
             boolean b = bindService(i, serviceConnection, Context.BIND_AUTO_CREATE);
-            addLog("M1 ComponentName: " + b);
+            addLog("M1: " + b);
         } catch (Exception e) { addLog("M1 ERR: " + e.getMessage()); }
     }
 
     public class SunmiBridge {
         @JavascriptInterface
         public void printHTML(final String html) {
-            addLog("printHTML len=" + html.length() + " connecte=" + printerConnected);
+            addLog("printHTML len=" + html.length());
             runOnUiThread(() -> {
                 if (printerConnected && woyouService != null) {
                     printWithSunmi(html);
                 } else {
                     pendingPrintHTML = html;
                     bindSunmiPrinter();
-                    webView.postDelayed(() -> {
+                    handler.postDelayed(() -> {
                         if (pendingPrintHTML != null) {
                             if (printerConnected && woyouService != null) {
                                 final String h = pendingPrintHTML;
@@ -204,46 +201,52 @@ public class MainActivity extends Activity {
             .replaceAll("[^\\x00-\\x7F]","?");
     }
 
-    private void printWithSunmi(String html) {
+    private void printWithSunmi(final String html) {
         addLog("--- Debut impression ---");
-        try {
-            String text = html
-                .replaceAll("(?s)<style[^>]*>.*?</style>","")
-                .replaceAll("<br\\s*/?>","\n")
-                .replaceAll("</div>","\n")
-                .replaceAll("</p>","\n")
-                .replaceAll("<[^>]+>","")
-                .replaceAll("&nbsp;"," ")
-                .replaceAll("&amp;","&")
-                .replaceAll("\n{3,}","\n\n")
-                .trim();
+        new Thread(() -> {
+            try {
+                String text = html
+                    .replaceAll("(?s)<style[^>]*>.*?</style>","")
+                    .replaceAll("<br\\s*/?>","\n")
+                    .replaceAll("</div>","\n")
+                    .replaceAll("</p>","\n")
+                    .replaceAll("<[^>]+>","")
+                    .replaceAll("&nbsp;"," ")
+                    .replaceAll("&amp;","&")
+                    .replaceAll("\n{3,}","\n\n")
+                    .trim();
+                text = cleanText(text);
 
-            text = cleanText(text);
+                woyouService.printerInit(null);
+                addLog("printerInit OK");
 
-            woyouService.printerInit(null);
-            addLog("printerInit OK");
-
-            for (String line : text.split("\n")) {
-                line = line.trim();
-                if (line.isEmpty()) continue;
-                if (line.matches("[-=]{3,}")) line = "--------------------------------";
-                try {
+                // Imprimer toutes les lignes
+                for (String line : text.split("\n")) {
+                    line = line.trim();
+                    if (line.isEmpty()) continue;
+                    if (line.matches("[-=]{3,}")) line = "--------------------------------";
                     woyouService.printText(line + "\n", null);
-                } catch (RemoteException re) {
-                    addLog("Ligne ERR: " + re.getMessage());
                 }
+                addLog("Lignes imprimees");
+
+                // ✅ Avancer le papier d'abord
+                woyouService.lineWrap(5, null);
+                addLog("lineWrap OK");
+
+                // ✅ Attendre 1 seconde puis couper
+                Thread.sleep(1000);
+                addLog("cutPaper apres delai...");
+                woyouService.cutPaper(null);
+                addLog("✅ IMPRESSION + COUPE TERMINEE");
+
+            } catch (Exception e) {
+                addLog("❌ ERREUR: " + e.getClass().getSimpleName() + " - " + e.getMessage());
+                runOnUiThread(() ->
+                    webView.evaluateJavascript(
+                        "alert('Ere: " + e.getClass().getSimpleName() + "');", null)
+                );
             }
-
-            // ✅ lineWrap seulement — PAS cutPaper qui crashait le service
-            woyouService.lineWrap(5, null);
-            addLog("✅ IMPRESSION TERMINEE");
-
-        } catch (Exception e) {
-            addLog("❌ ERREUR: " + e.getClass().getSimpleName() + " - " + e.getMessage());
-            runOnUiThread(() ->
-                webView.evaluateJavascript("alert('Ere: " + e.getClass().getSimpleName() + "');", null)
-            );
-        }
+        }).start();
     }
 
     @Override
