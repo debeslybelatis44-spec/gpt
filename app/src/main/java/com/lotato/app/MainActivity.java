@@ -55,7 +55,7 @@ public class MainActivity extends Activity {
         public void onServiceDisconnected(ComponentName name) {
             woyouService = null;
             printerConnected = false;
-            addLog("❌ DECONNECTE - reconnexion...");
+            addLog("❌ DECONNECTE");
             handler.postDelayed(() -> bindSunmiPrinter(), 2000);
         }
     };
@@ -202,7 +202,7 @@ public class MainActivity extends Activity {
     }
 
     private void printWithSunmi(final String html) {
-        addLog("--- Impression RAW ---");
+        addLog("--- Impression ---");
         new Thread(() -> {
             try {
                 String text = html
@@ -217,35 +217,52 @@ public class MainActivity extends Activity {
                     .trim();
                 text = cleanText(text);
 
-                // ✅ Construire ESC/POS complet en un seul bloc
                 ByteArrayOutputStream bos = new ByteArrayOutputStream();
 
-                // ESC @ - reset complet
+                // ESC @ reset
                 bos.write(new byte[]{0x1B, 0x40});
 
-                // Imprimer chaque ligne
                 for (String line : text.split("\n")) {
                     line = line.trim();
                     if (line.isEmpty()) {
                         bos.write('\n');
                         continue;
                     }
-                    if (line.matches("[-=]{3,}")) {
-                        line = "--------------------------------";
-                    }
+                    if (line.matches("[-=]{3,}")) line = "--------------------------------";
                     bos.write(line.getBytes("ASCII"));
                     bos.write('\n');
                 }
 
-                // Feed papier - ESC d 8
+                // Feed 8 lignes
                 bos.write(new byte[]{0x1B, 0x64, 0x08});
 
                 byte[] data = bos.toByteArray();
-                addLog("RAW bytes: " + data.length);
+                addLog("Bytes: " + data.length);
 
-                // ✅ sendRAWData - un seul appel avec tout le ticket
-                woyouService.sendRAWData(data, null);
-                addLog("✅ sendRAWData OK");
+                // ✅ Essayer printRawData d'abord
+                try {
+                    woyouService.printRawData(data, null);
+                    addLog("✅ printRawData OK");
+                } catch (Exception e1) {
+                    addLog("printRawData ERR: " + e1.getMessage());
+                    // Fallback: sendRAWData
+                    try {
+                        woyouService.sendRAWData(data, null);
+                        addLog("✅ sendRAWData OK");
+                    } catch (Exception e2) {
+                        addLog("sendRAWData ERR: " + e2.getMessage());
+                        // Dernier fallback: printText ligne par ligne
+                        woyouService.printerInit(null);
+                        for (String line : text.split("\n")) {
+                            line = line.trim();
+                            if (!line.isEmpty()) {
+                                woyouService.printText(line + "\n", null);
+                            }
+                        }
+                        woyouService.lineWrap(8, null);
+                        addLog("✅ printText fallback OK");
+                    }
+                }
 
             } catch (Exception e) {
                 addLog("❌ " + e.getClass().getSimpleName() + ": " + e.getMessage());
